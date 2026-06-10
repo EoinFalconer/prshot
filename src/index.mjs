@@ -12,12 +12,18 @@
  * The rendering is pluggable: prshot knows nothing about your test framework. It
  * only knows it ran a command and a PNG appeared at $EVIDENCE_OUT.
  */
-import {copyFileSync, mkdirSync, rmSync} from 'node:fs'
+import {copyFileSync, cpSync, mkdirSync, rmSync} from 'node:fs'
 import path from 'node:path'
 
 import {parseArgs, USAGE} from './args.mjs'
-import {runCapture} from './capture.mjs'
-import {defaultCommentBody, postToPr} from './github.mjs'
+import {runCapture, runCaptureFrames} from './capture.mjs'
+import {
+  assembleSideBySideGif,
+  assembleSingleGif,
+  freshDir,
+  resolveFfmpeg,
+} from './gif.mjs'
+import {defaultCommentBody, defaultGifCommentBody, postToPr} from './github.mjs'
 import {checkoutPaths, currentBranch, repoRoot} from './git.mjs'
 import {resolveSourceFiles} from './sources.mjs'
 import {stitch} from './stitch.mjs'
@@ -61,6 +67,10 @@ export async function run(argv) {
   const name = slugify(opts.name || currentBranch() || 'evidence')
   const outDir = path.resolve(root, opts.out)
   mkdirSync(outDir, {recursive: true})
+
+  if (opts.gif) {
+    return runGif({opts, root, name, outDir, log})
+  }
 
   // prshot controls this path and passes it to the capture command via env.
   const captureOut = path.join(outDir, '.frame.png')
@@ -150,6 +160,134 @@ export async function run(argv) {
     try {
       const {execFileSync} = await import('node:child_process')
       execFileSync('open', [stitchedPng])
+    } catch {
+      /* non-macOS or no opener — ignore */
+    }
+  }
+
+  return 0
+}
+
+/**
+ * GIF mode — the animated sibling of the static flow.
+ *
+ * Same five-step shape as static mode (capture after → checkout base → capture
+ * before → restore → assemble), but:
+ *   - capture emits a *sequence* of frames into a directory (PRSHOT_GIF=1), and
+ *   - assembly is ffmpeg: a single GIF (--no-base) or a side-by-side GIF.
+ */
+async function runGif({opts, root, name, outDir, log}) {
+  // Fail fast and clearly if ffmpeg is missing — before running any capture.
+  const ffmpeg = resolveFfmpeg()
+
+  // Scratch directory the capture command writes frames into (re-used per ref),
+  // plus persisted per-ref copies so we still have both sequences for assembly.
+  const captureFramesDir = path.join(outDir, '.frames')
+  const afterFramesDir = path.join(outDir, `${name}.after.frames`)
+  const beforeFramesDir = path.join(outDir, `${name}.before.frames`)
+  const outGif = path.join(outDir, `${name}.gif`)
+
+  log(`prshot · ${name} · gif`)
+
+  // ── Step 1: AFTER (current branch) ────────────────────────────────────────
+  log('• Capturing AFTER frames (current branch)…')
+  runCaptureFrames({command: opts.capture, outDir: captureFramesDir, cwd: root, label: 'AFTER'})
+  freshDir(afterFramesDir)
+  cpSync(captureFramesDir, afterFramesDir, {recursive: true})
+
+  // ── Step 2: BEFORE (base ref), unless --no-base ───────────────────────────
+  let haveBefore = false
+  if (opts.noBase) {
+    log('• --no-base: single GIF (no base checkout).')
+  } else {
+    const files = resolveSourceFiles({
+      base: opts.base,
+      source: opts.source,
+      includeTests: opts.includeTests,
+    })
+
+    if (files.length === 0) {
+      log(
+        `• No revertible changed source files vs ${opts.base} — skipping BEFORE.\n` +
+          `  (Use --no-base for variant stories, or --source <glob> to target files.)`,
+      )
+    } else {
+      log(`• Capturing BEFORE: checking out ${files.length} source file(s) from ${opts.base}…`)
+      checkoutPaths(opts.base, files)
+      try {
+        runCaptureFrames({
+          command: opts.capture,
+          outDir: captureFramesDir,
+          cwd: root,
+          label: 'BEFORE',
+        })
+        freshDir(beforeFramesDir)
+        cpSync(captureFramesDir, beforeFramesDir, {recursive: true})
+        haveBefore = true
+      } finally {
+        // ALWAYS restore the working tree, even if the before capture failed.
+        log('• Restoring working tree…')
+        checkoutPaths('HEAD', files)
+      }
+    }
+  }
+
+  // ── Step 3: assemble with ffmpeg ──────────────────────────────────────────
+  // Defaults differ by output shape (the side-by-side is twice as wide), and the
+  // shape is decided by whether we actually got a BEFORE — not just the flag, as
+  // a missing revertible-files case also falls through to a single GIF.
+  if (haveBefore) {
+    log('• Assembling side-by-side GIF (before | after)…')
+    assembleSideBySideGif({
+      beforeDir: beforeFramesDir,
+      afterDir: afterFramesDir,
+      outGif,
+      fps: opts.fps,
+      scale: opts.gifScale ?? 1040,
+      crop: opts.crop,
+      ffmpeg,
+    })
+  } else {
+    log('• Assembling single GIF…')
+    assembleSingleGif({
+      framesDir: afterFramesDir,
+      outGif,
+      fps: opts.fps,
+      scale: opts.gifScale ?? 820,
+      crop: opts.crop,
+      ffmpeg,
+    })
+  }
+
+  // Tidy the scratch frames (keep the per-ref copies for inspection/re-runs).
+  rmSync(captureFramesDir, {recursive: true, force: true})
+
+  const rel = path.relative(process.cwd(), outGif)
+  log(`\n✓ ${rel}`)
+
+  // ── Step 4: optional PR comment ───────────────────────────────────────────
+  if (opts.pr) {
+    log(`• Posting to PR #${opts.pr}…`)
+    const url = postToPr({
+      pr: opts.pr,
+      pngPath: outGif, // a .gif path; postToPr hosts the bytes as-is.
+      assetsBranch: opts.assetsBranch,
+      name,
+      base: opts.base,
+      commentBody: defaultGifCommentBody,
+      ext: 'gif',
+    })
+    log(`  posted: ${url}`)
+  } else {
+    log('  Re-run with --pr <number> to post it as a PR comment,')
+    log('  or drag the GIF into the PR (GitHub uploads it on drop).')
+  }
+
+  // ── Step 5: optional open ─────────────────────────────────────────────────
+  if (opts.open) {
+    try {
+      const {execFileSync} = await import('node:child_process')
+      execFileSync('open', [outGif])
     } catch {
       /* non-macOS or no opener — ignore */
     }

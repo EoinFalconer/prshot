@@ -7,7 +7,8 @@
     "prshot": "bin/prshot.mjs"
   },
   "exports": {
-    ".": "./src/index.mjs"
+    ".": "./src/index.mjs",
+    "./cursor": "./src/cursor.mjs"
   },
   "files": [
     "bin",
@@ -19,12 +20,14 @@
     "node": ">=18"
   },
   "scripts": {
-    "lint": "node --check bin/prshot.mjs && node --check src/index.mjs",
-    "example:playwright": "node examples/playwright/capture.mjs"
+    "lint": "node --check bin/prshot.mjs && node --check src/index.mjs && node --check src/gif.mjs && node --check src/cursor.mjs",
+    "example:playwright": "node examples/playwright/capture.mjs",
+    "example:playwright-gif": "node examples/playwright-gif/capture-frames.mjs"
   },
   "keywords": [
     "visual-regression",
     "screenshot",
+    "gif",
     "pull-request",
     "ci",
     "before-after",

@@ -57,12 +57,13 @@ function existingSha(remotePath, branch) {
  * @param {string} o.name             Slug used in the remote path.
  * @param {string} o.base             Base ref (used if the branch must be created).
  * @param {(url:string)=>string} o.commentBody  Builds the comment markdown from the raw URL.
+ * @param {string} [o.ext]            File extension for the hosted asset. Default: "png".
  * @returns {string} The raw download URL of the hosted image.
  */
-export function postToPr({pr, pngPath, assetsBranch, name, base, commentBody}) {
+export function postToPr({pr, pngPath, assetsBranch, name, base, commentBody, ext = 'png'}) {
   ensureAssetsBranch(assetsBranch, base)
 
-  const remotePath = `pr-${pr}/${name}.png`
+  const remotePath = `pr-${pr}/${name}.${ext}`
   const sha = existingSha(remotePath, assetsBranch)
 
   const body = JSON.stringify({
@@ -90,5 +91,15 @@ export function defaultCommentBody(url) {
     `![before-after](${url})\n\n` +
     `<sub>Generated with <a href="https://github.com/EoinFalconer/prshot">prshot</a> — ` +
     `headless render, no app/auth/data.</sub>`
+  )
+}
+
+/** Default PR comment template for animated GIF evidence. */
+export function defaultGifCommentBody(url) {
+  return (
+    `### Before / after (animated)\n\n` +
+    `![before-after](${url})\n\n` +
+    `<sub>Generated with <a href="https://github.com/EoinFalconer/prshot">prshot</a> ` +
+    `<code>--gif</code> — headless render, no app/auth/data.</sub>`
   )
 }

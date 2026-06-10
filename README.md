@@ -112,6 +112,84 @@ prshot --capture "vitest run -c vitest.evidence.config.mts Dialog.evidence.tsx"
 prshot --no-base --capture "node capture-variants.mjs" --name button-states
 ```
 
+## Animated before / after GIFs (`--gif`)
+
+Some changes are about _behaviour_, not a single frame: a toggle that flips, an
+error that clears as you type, a button whose destructive copy you softened. A
+still can't show the interaction. `--gif` captures the change **in motion** —
+and stitches before / after into one looping, side-by-side GIF.
+
+![before/after GIF: a destructive red "Cancel subscription" button becomes a calmer blue "Manage subscription", with a pointer gliding in and clicking](https://raw.githubusercontent.com/EoinFalconer/prshot/prshot-assets/docs/gif-demo.gif)
+
+```bash
+# ffmpeg is required for GIF assembly (one-time)
+brew install ffmpeg            # macOS  (sudo apt install ffmpeg on Debian/Ubuntu)
+
+# before/after GIF for the current PR  → .prshot/<branch>.gif
+prshot --gif --capture "node capture-frames.mjs" --base origin/main
+```
+
+### The frame contract
+
+In `--gif` mode the capture command emits a **sequence of frames** instead of one
+screenshot. prshot signals this with two env vars and otherwise keeps the same
+tiny integration surface:
+
+| Env var                       | Static mode    | `--gif` mode             |
+| ----------------------------- | -------------- | ------------------------ |
+| `PRSHOT_GIF`                  | _(unset)_      | `1`                      |
+| `EVIDENCE_OUT` / `PRSHOT_OUT` | a PNG **file** | a frames **directory**   |
+
+Your story writes `frame-000.png`, `frame-001.png`, … (zero-padded, in order)
+into that directory. prshot runs it once on your branch (after), checks out the
+PR's changed source from the base ref, runs it again (before), restores your
+tree, and assembles a side-by-side GIF — left = before, right = after, each under
+a colored bar (red / green) with a divider. Pass `--no-base` for a single GIF.
+
+> The **static contract is unchanged**: without `--gif`, `EVIDENCE_OUT` is still a
+> single PNG path and `PRSHOT_GIF` is unset. `--gif` is purely additive.
+
+### The cursor helper (`prshot/cursor`)
+
+A GIF reads best when the viewer can _see the interaction_ — a pointer gliding to
+the thing that changed, a click, then the result. The browser's real cursor isn't
+captured in screenshots, so prshot ships a small, dependency-free helper that
+injects an SVG pointer and animates it. Import it from `prshot/cursor`:
+
+```js
+import {page, userEvent} from 'vitest/browser'
+import {centerOf, clickPulse, glide, injectCursor, makeShooter} from 'prshot/cursor'
+
+const dir = process.env.EVIDENCE_OUT // a directory in --gif mode
+const shot = makeShooter(dir, (path) => page.screenshot({path}))
+const cursor = injectCursor()
+
+await glide(cursor, centerOf(button), 16, shot) // glide the pointer in, frame per step
+await clickPulse(cursor, shot) //                   show a click ripple
+await userEvent.click(button) //                    fire the REAL interaction
+await shot() //                                     capture the resulting state
+```
+
+The pattern is always **glide → clickPulse → real click → capture frames** (then
+optionally glide the pointer away so the result is unobscured, and hold a few
+frames so the loop reads). See [`examples/playwright-gif`](./examples/playwright-gif)
+for a complete, runnable capture command.
+
+### GIF knobs
+
+```bash
+prshot --gif --capture "node capture-frames.mjs" \
+  --fps 14 \             # output frame rate                       (default 14)
+  --gif-scale 1040 \     # output width in px (820 single / 1040 side-by-side)
+  --crop 900:600:60:40   # optional ffmpeg crop W:H:X:Y per input frame
+```
+
+> GIF assembly uses **ffmpeg on your PATH** (`brew install ffmpeg`). The ffmpeg
+> bundled with Playwright is video-only and won't work — prshot needs a full
+> system ffmpeg (image2 demuxer + pad/hstack). If ffmpeg lives somewhere unusual,
+> point `$FFMPEG_PATH` at it. prshot checks for ffmpeg up front and fails with an
+> actionable message if it's missing.
+
 ## Writing good evidence
 
 > **The captured frame must show the subject _in context_ so a non‑implementer
@@ -157,8 +235,14 @@ prshot --capture "<command>" [options]
   --label-before <s>    Override the left column label
   --label-after <s>     Override the right column label
   --viewport <WxH>      Stitch canvas width hint                    (default: 2100x1200)
-  --open                Open the stitched PNG when done (macOS)
+  --open                Open the result when done (macOS)
   -h, --help            Show help
+
+  # GIF mode (animated before/after) — needs ffmpeg on PATH
+  --gif                 Produce an animated GIF instead of a static PNG
+  --fps <n>             Output frame rate                           (default: 14)
+  --gif-scale <px>      Output width in px (820 single / 1040 side-by-side)
+  --crop <W:H:X:Y>      Optional ffmpeg crop on every input frame
 ```
 
 By default prshot reverts **all changed tracked files** between `<base>...HEAD`,
@@ -179,6 +263,8 @@ with `--source` in a monorepo.
   deps) installed and working — i.e. be reasonably current with the base ref.
 - Stitching needs **Playwright** available (an optional peer dependency). prshot
   deliberately does **not** bundle a browser.
+- `--gif` additionally needs a **system ffmpeg** on PATH (`brew install ffmpeg`).
+  The static PNG path does not.
 - `--pr` needs the authenticated [`gh` CLI](https://cli.github.com/).
 
 ## prshot vs. the alternatives
@@ -200,9 +286,11 @@ before/after image for a single PR, locally, for free, with no new infra — the
 ## Contributing
 
 Issues and PRs welcome. The code is plain Node ESM with no runtime dependencies
-(Playwright is an optional peer). Start at [`src/index.mjs`](./src/index.mjs) —
-the orchestrator — and follow it through `capture` → `sources` → `stitch` →
-`github`.
+(Playwright is an optional peer; ffmpeg is only needed for `--gif`). Start at
+[`src/index.mjs`](./src/index.mjs) — the orchestrator — and follow it through
+`capture` → `sources` → `stitch` → `github` for the static path, or
+`capture` → `gif` for the `--gif` path. The optional injected-pointer helper
+lives in [`src/cursor.mjs`](./src/cursor.mjs).
 
 ## License
 
