@@ -39,8 +39,25 @@ Options:
   --label-before <s>  Override the "before" column label. Default: "Before · <base>".
   --label-after <s>   Override the "after" column label.  Default: "After · this branch".
   --viewport <WxH>    Stitch canvas width hint. Default: 2100x1200
-  --open              Open the stitched PNG when done (macOS \`open\`).
+  --open              Open the stitched image when done (macOS \`open\`).
   -h, --help          Show this help.
+
+GIF mode (animated before/after):
+  --gif               Produce an animated GIF instead of a static PNG. In this
+                      mode prshot tells your capture command to emit a *sequence*
+                      of frames rather than one screenshot: it sets PRSHOT_GIF=1
+                      and points $EVIDENCE_OUT (and $PRSHOT_OUT) at a frames
+                      DIRECTORY. Your story writes frame-000.png, frame-001.png,
+                      … into that directory (zero-padded, in order). prshot then
+                      assembles them into a GIF with ffmpeg, and — unless
+                      --no-base — captures a second sequence on the base ref and
+                      stitches the two into a side-by-side GIF (before | after).
+                      Requires ffmpeg on PATH (\`brew install ffmpeg\`).
+  --fps <n>           Output frame rate for the GIF. Default: 14
+  --gif-scale <px>    Output width in pixels (height keeps aspect). Default: 820
+                      for a single GIF, 1040 for a side-by-side.
+  --crop <W:H:X:Y>    Optional ffmpeg crop applied to every input frame before
+                      scaling (e.g. 900:600:60:40). Trims chrome/whitespace.
 
 Examples:
   # vitest-browser story that screenshots to process.env.EVIDENCE_OUT
@@ -51,6 +68,12 @@ Examples:
 
   # single-frame prop-toggle variant (no base checkout)
   prshot --no-base --capture "node capture-variants.mjs" --name button-states
+
+  # animated before/after GIF of an interaction (frames -> side-by-side GIF)
+  prshot --gif --capture "node capture-frames.mjs" --base origin/main --pr 123
+
+  # single animated GIF, no base (variant that animates both states in one story)
+  prshot --gif --no-base --capture "node capture-frames.mjs" --name toggle-on
 `
 
 /**
@@ -74,6 +97,11 @@ export function parseArgs(argv) {
     viewport: {width: 2100, height: 1200},
     open: false,
     help: false,
+    // GIF mode.
+    gif: false,
+    fps: 14,
+    gifScale: null, // null -> mode default (820 single / 1040 side-by-side)
+    crop: null, // optional ffmpeg crop "W:H:X:Y"
   }
 
   const needValue = (flag, value) => {
@@ -131,6 +159,35 @@ export function parseArgs(argv) {
       case '--open':
         opts.open = true
         break
+      case '--gif':
+        opts.gif = true
+        break
+      case '--fps': {
+        const v = needValue(a, argv[++i])
+        const n = Number(v)
+        if (!Number.isFinite(n) || n <= 0) {
+          throw new Error(`--fps expects a positive number, got "${v}"`)
+        }
+        opts.fps = n
+        break
+      }
+      case '--gif-scale': {
+        const v = needValue(a, argv[++i])
+        const n = Number(v)
+        if (!Number.isInteger(n) || n <= 0) {
+          throw new Error(`--gif-scale expects a positive integer width, got "${v}"`)
+        }
+        opts.gifScale = n
+        break
+      }
+      case '--crop': {
+        const v = needValue(a, argv[++i])
+        if (!/^\d+:\d+:\d+:\d+$/.test(v)) {
+          throw new Error(`--crop expects W:H:X:Y (e.g. 900:600:60:40), got "${v}"`)
+        }
+        opts.crop = v
+        break
+      }
       case '-h':
       case '--help':
         opts.help = true
