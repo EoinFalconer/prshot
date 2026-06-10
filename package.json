@@ -1,0 +1,57 @@
+{
+  "name": "prshot",
+  "version": "0.1.0",
+  "description": "Before/after PR screenshots with almost no overhead. Pluggable capture (vitest-browser, Playwright, Cypress, Puppeteer), local, free, no service.",
+  "type": "module",
+  "bin": {
+    "prshot": "bin/prshot.mjs"
+  },
+  "exports": {
+    ".": "./src/index.mjs"
+  },
+  "files": [
+    "bin",
+    "src",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "lint": "node --check bin/prshot.mjs && node --check src/index.mjs",
+    "example:playwright": "node examples/playwright/capture.mjs"
+  },
+  "keywords": [
+    "visual-regression",
+    "screenshot",
+    "pull-request",
+    "ci",
+    "before-after",
+    "playwright",
+    "vitest",
+    "cypress",
+    "puppeteer",
+    "diff",
+    "pr",
+    "evidence"
+  ],
+  "author": "Eoin Falconer",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/EoinFalconer/prshot.git"
+  },
+  "bugs": {
+    "url": "https://github.com/EoinFalconer/prshot/issues"
+  },
+  "homepage": "https://github.com/EoinFalconer/prshot#readme",
+  "peerDependencies": {
+    "playwright": ">=1.30.0"
+  },
+  "peerDependenciesMeta": {
+    "playwright": {
+      "optional": true
+    }
+  }
+}

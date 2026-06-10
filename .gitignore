@@ -1,0 +1,9 @@
+node_modules/
+.prshot/
+.visual-evidence/
+*.log
+.DS_Store
+.env
+.env.local
+dist/
+coverage/
